@@ -1,2 +1,216 @@
 # AIkea
 AMR with Robotic Arm for Item Delivery 
+# Pinky AMR Delivery Demo (Kiosk → AMR, with MG400)
+
+> AMR(Pinky Violet)와 로봇팔(MG400)을 소켓 서버로 연동하고, YOLO+호모그래피로 좌표를 정합하여 **픽앤플레이스**를 수행합니다.
+>
+> Connects an AMR (Pinky Violet) and a robotic arm (MG400) via a socket server; uses YOLO and homography-based coordinate mapping for **pick-and-place**.
+
+---
+
+## 1. 개요 (Overview)
+
+* 키오스크(서버)에서 **품목·장소**를 입력 → AMR 클라이언트가 호출되어 **자율주행** 수행
+* 로봇팔(MG400)은 YOLO 객체 인식 + **Homography**(픽셀→로봇 좌표 변환)로 **정밀 집기/배치**
+* 본 문서는 **시연 주행 테스트(Standard Demo Run)** 절차를 정리합니다.
+
+> **Note**
+>
+> * ROS 2 **Jazzy** + Ubuntu 24.04 기준
+> * 워크스페이스: `~/nav_ws` (모노레포, `src/`만 Git 커밋 권장)
+> * 기본 서버 포트: `9997` (변경 시 클라이언트 파라미터와 일치 필요)
+
+---
+
+## 2. 시연 주행 테스트 (Standard Demo Run)
+
+### 2.1 터미널 레이아웃
+
+* **총 8개 터미널**을 띄워 **좌/우 반반** 배치
+
+  * **오른쪽: `pinky_1` (b42a)** — `ROS_DOMAIN_ID=69`
+  * **왼쪽: `pinky_2` (b256 또는 a934)** — `ROS_DOMAIN_ID=17`
+
+### 2.2 SSH 접속 (각 pinky에 접속)
+
+1. 각 pinky의 IP로 SSH 접속
+
+**SSH가 안 될 때 체크리스트**
+
+1. Pinky 전원이 켜졌는지 확인
+2. Pinky IP 확인 절차
+
+   * PC의 Wi‑Fi를 확인하고자 하는 Pinky의 SSID로 연결
+   * 브라우저에서 `http://192.168.4.1:8888` 접속 → **Terminal** 진입
+   * `\sbin\ifconfig` 실행 후 IP 확인
+
+> 필요 시 스크린샷을 `docs/images/`에 추가하고, 본 README의 이미지 경로를 갱신하세요.
+
+### 2.3 ROS\_DOMAIN\_ID 설정 (매 터미널 필수)
+
+> **중요**: 환경변수 이름은 **`ROS_DOMAIN_ID`** 입니다. (일부 자료의 `ROS_DOMAIN`는 오기)
+
+```bash
+# 오른쪽 그룹 (pinky_1: b42a)
+export ROS_DOMAIN_ID=69
+
+# 왼쪽 그룹 (pinky_2: b256 또는 a934)
+export ROS_DOMAIN_ID=17
+```
+
+### 2.4 Kiosk 서버 실행
+
+* VS Code에서 `~/nav_ws/src/nav_pkg/nav_pkg` 폴더를 열고 **kiosk 서버 스크립트** 실행
+
+  * 파일명이 환경마다 다를 수 있습니다: `kiosk_2.py` 또는 `kiosk.py`
+  * CLI 대안(패키징 상태에 따라):
+
+    ```bash
+    source ~/nav_ws/install/local_setup.bash
+    # 예) 엔트리포인트가 등록되어 있는 경우
+    ros2 run nav_pkg kiosk
+    # 또는 파이썬 모듈 실행 형태
+    python3 -m nav_pkg.kiosk
+    ```
+* 서버 포트(예: **9997**)를 확인하고, 클라이언트 파라미터와 일치시킵니다.
+
+### 2.5 각 터미널에서 Launch/Node 실행
+
+> 아래 명령은 각 robot 그룹(왼쪽 pinky\_2 / 오른쪽 pinky\_1)에서 **각각 4개 터미널**에서 수행하는 예시입니다.
+
+#### (왼쪽) pinky\_2 — 주행 노드
+
+```bash
+source ~/nav_ws/install/local_setup.bash
+ros2 run nav_pkg pinky_client_2 --ros-args -p server_port:=9997
+```
+
+#### (왼쪽) pinky\_2 — 네비게이션 RViz
+
+```bash
+source ~/pinky_violet/install/local_setup.bash
+ros2 launch pinky_navigation nav2_view.launch.xml
+```
+
+#### (왼쪽) pinky\_2 — Bringup
+
+```bash
+ros2 launch pinky_bringup bringup.launch.xml
+```
+
+#### (왼쪽) pinky\_2 — Navigation (지도: `pltt_2.yaml`)
+
+```bash
+ros2 launch pinky_navigation bringup_launch.xml map:=pltt_2.yaml
+```
+
+---
+
+#### (오른쪽) pinky\_1 — 주행 노드
+
+```bash
+source ~/nav_ws/install/local_setup.bash
+ros2 run nav_pkg pinky_client_2 --ros-args -p server_port:=9997
+```
+
+#### (오른쪽) pinky\_1 — 네비게이션 RViz
+
+```bash
+source ~/pinky_violet/install/local_setup.bash
+ros2 launch pinky_navigation nav2_view.launch.xml
+```
+
+#### (오른쪽) pinky\_1 — Bringup
+
+```bash
+ros2 launch pinky_bringup bringup.launch.xml
+```
+
+#### (오른쪽) pinky\_1 — Navigation (지도: `pltt_map.yaml`)
+
+```bash
+ros2 launch pinky_navigation bringup_launch.xml map:=pltt_map.yaml
+```
+
+> **Map 주의**: 환경에 따라 `pltt_2.yaml` / `pltt_map.yaml` 명칭이 다를 수 있습니다. 실제 보유한 맵 파일명으로 교체하세요.
+
+### 2.6 클라이언트 노드에서 로봇 ID 입력
+
+* 주행 노드(위의 주행 노드 터미널)에서 입력 대기 시 **각각** 입력
+
+  * 왼쪽: `pinky_2`
+  * 오른쪽: `pinky_1`
+* 서버와의 연결 메시지가 정상 출력되는지 확인
+
+### 2.7 서버에서 명령 내리기 `<목적지> <가구>`
+
+* 예: `카페 의자`, `레스토랑 소파` 등
+* **동작 정책**: 한 Pinky의 동작이 끝날 때까지 대기 → 이후 다른 Pinky 호출
+
+---
+
+## 3. 시스템 구성 (System Components)
+
+* **Kiosk(Server)**: 품목·장소 입력 UI/CLI, 소켓 서버(TCP, 기본 9997)로 각 AMR에 명령 전달
+* **Client(AMR)**: 서버 접속 후 목표를 수신 → Nav2로 자율주행, 필요 시 ArUco/YOLO 트리거
+* **MG400(Arm)**: YOLO 객체 인식 + Homography로 좌표 변환, **Pick & Place** 실행
+
+> **Dependencies (예시)**: ROS 2 Jazzy, Nav2, OpenCV, Ultralytics YOLO, NumPy, Dobot MG400 SDK, roslibpy(선택)
+
+---
+
+## 4. 빈번한 이슈 & 해결 (Troubleshooting)
+
+* **SSH 불가**: 전원/SSID/IP 확인(§2.2), 방화벽/네트워크 라우팅 점검
+* **도메인 충돌**: 모든 관련 터미널에서 **`ROS_DOMAIN_ID`** 재확인(§2.3)
+* **패키지 경로**: 실행 전마다 `source ~/nav_ws/install/local_setup.bash`
+* **포트 미일치**: 서버/클라이언트 `server_port` 동일 설정(기본 9997)
+* **맵 파일명 오류**: 실제 존재하는 `*.yaml`로 교체
+* **권한**: 직렬/카메라 장치 접근 권한, `udev` 규칙, Dialout 그룹 등 확인
+
+---
+
+## 5. 저장소 구조 & Git 권장
+
+```
+nav_ws/
+  src/
+    nav_pkg/
+      nav_pkg/
+        kiosk.py (또는 kiosk_2.py)
+        pinky_client_2.py
+        ...
+  .gitignore   # build/install/log 제외
+  README.md
+```
+
+* **Git에는 `src/`만 포함**하고 `build/`, `install/`, `log/`는 제외 권장
+* 비밀정보(`.env`, 인증키), 대용량 산출물(가중치, 동영상)은 커밋 금지
+
+---
+
+## 6. 라이선스 (License)
+
+* **Code**: Apache-2.0 권장 (변경 가능)
+* **Third-Party Notices**
+
+  * Ultralytics YOLO: **AGPL-3.0** 또는 상용 라이선스 (사용 시 해당 조항 준수)
+  * Dobot MG400 SDK/APIs: 제조사 약관(재배포 금지 등) 준수, 바이너리 미포함 권장
+  * ROS 2: Apache-2.0, OpenCV: BSD-3-Clause, NumPy: BSD 스타일
+
+---
+
+## 7. EN Quick Start (Mirror)
+
+1. Open 8 terminals. Right = **pinky\_1 (b42a)** with `ROS_DOMAIN_ID=69`, Left = **pinky\_2 (b256/a934)** with `ROS_DOMAIN_ID=17`.
+2. SSH into each robot. If it fails, connect to the robot Wi‑Fi → `192.168.4.1:8888` → Terminal → run `\sbin\ifconfig` to get IP.
+3. Start **Kiosk server** (`kiosk_2.py` or `kiosk.py`), ensure **port 9997**.
+4. For each robot, start: client node, RViz, bringup, navigation (with proper map YAML).
+5. In client nodes, enter robot IDs: `pinky_2`, `pinky_1`.
+6. From the server, send commands as `<destination> <furniture>` (e.g., `Cafe Chair`). The other robot waits until the current one finishes.
+
+---
+
+## 8. 문의
+
+* 운영/시연 환경이 다르면 맵 파일명, 포트, 엔트리포인트가 달라질 수 있습니다. 본 README의 변수만 맞춰주시면 동일 절차로 시연 가능합니다.
